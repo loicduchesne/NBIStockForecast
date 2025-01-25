@@ -61,14 +61,3 @@ if __name__ == "__main__":
         print(f"Processing dataset from '{source_folder}'...")
         process_dataset(source_folder)
         print("Dataset processing completed.")
-
-
-
-# if __name__ == "__main__":
-#     pass
-#     # Anyone should be able to run main, and it will sort the files in the right order
-#     # Constraints:
-#     # Periods are not specified
-#     # The initial folder name (TrainingData) needs to be specified in a variable
-#     # There could be up to two Period folders for any periods (check if 2 folders)
-#     data_folder_name = 'TrainingData'
