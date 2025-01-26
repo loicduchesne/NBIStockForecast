@@ -12,10 +12,18 @@ class LSTM(nn.Module):
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, dropout=dropout, batch_first=True)
         self.linear = nn.Linear(in_features=hidden_size, out_features=output_size)
 
-    def forward(self, input, hidden):
+    def forward(self, input, hidden=None):
+        batch_size = input.size(0)  # Get batch size from input tensor
+        if hidden is None:
+            # Initialize hidden state dynamically to match the batch size
+            hidden = (
+                torch.zeros(self.num_layers, batch_size, self.hidden_size).to(input.device),
+                torch.zeros(self.num_layers, batch_size, self.hidden_size).to(input.device)
+            )
+
         out, hidden = self.lstm(input, hidden)
-        out = out[:, -1, :]
-        out = self.linear(out)  # (batch_size, output_size)
+        out = out[:, -1, :]  # Take the output of the last time step
+        out = self.linear(out)  # Pass it through the fully connected layer
         return out, hidden
 
     def init_hidden(self, batch_size):

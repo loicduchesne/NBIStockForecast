@@ -2,15 +2,20 @@
 import os
 import json
 from tqdm.notebook import tqdm, trange
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_curve, precision_recall_curve, auc
+from sklearn.metrics import roc_auc_score, average_precision_score
 import torch
+import numpy as np
+import warnings
 
 # TRAINER
 class LSTMTrainer:
-    def __init__(self, model, train_loaders, test_loader, optimizer, loss_fn, device, num_epochs=100, pbar_relative_position=0):
+    def __init__(self, model, train_loaders, test_loaders, optimizer, loss_fn, device, num_epochs=100, pbar_relative_position=0):
         # Objects
         self.model = model
         self.train_loaders = train_loaders
-        self.test_loader = test_loader
+        self.test_loaders = test_loaders
         self.optimizer = optimizer
         self.loss_fn = loss_fn
 
@@ -44,11 +49,21 @@ class LSTMTrainer:
         for epoch in pbar_epochs:
             # --- TRAINING LOOP ---
             self.model.train()
-            train_loss = 0.0
+
             # TODO: Fix loss
 
-            for train_loader in self.train_loaders:
+            pbar_loaders = tqdm(
+                    self.train_loaders,
+                    desc=f'Epoch {epoch}',
+                    unit='period',
+                    position=self.pbar_relative_position + 1,
+                    leave=False  # Remove old batch bars once each epoch finishes
+                )
+
+            for period_idx, train_loader in enumerate(pbar_loaders):
                 # TODO: Hidden initialization for each epoch
+                train_loss = 0.0
+
                 h0, c0 = self.model.init_hidden(train_loader.batch_size)
                 hidden = (h0.to(self.device), c0.to(self.device))
 
@@ -59,70 +74,91 @@ class LSTMTrainer:
 
                     output, hidden = self.model(data, hidden)
                     hidden = (hidden[0].detach(), hidden[1].detach())
-                    current_loss = self.loss_fn(output, target.squeeze())
+                    current_loss = self.loss_fn(output, target)
                     current_loss.backward()
                     self.optimizer.step()
 
                     train_loss += current_loss.item()
 
+                    pbar_loaders.set_postfix({'Period Loss': train_loss})
+
                 # Compute average training loss
                 train_loss /= len(train_loader.dataset)
                 self.train_losses.append(train_loss)
 
+                pbar_loaders.set_postfix({f'Period {period_idx} Loss': f'{train_loss:.4f}'})
+
             # --- VALIDATION / EVALUATION ---
-            if self.test_loader is not None:
-                val_loss, auroc, auprc = self.evaluate()
+            if self.test_loaders is not None:
+                val_loss, period_aurocs = self.evaluate()
                 self.val_losses.append(val_loss)
-                self.aurocs.append(auroc)
-                self.auprcs.append(auprc)
+                self.aurocs.append(period_aurocs)
 
                 # Update the epoch bar description
-                pbar_epochs.set_description(
-                    f'Training | Epoch [{epoch+2}/{self.num_epochs}] - (Val.) Loss={val_loss:.4f}, AUROC={auroc:.3f}, AUPRC={auprc:.3f}'
-                )
-            else:
-                # Update the epoch bar description for training loss only
-                pbar_epochs.set_description(
-                    f'Training | Epoch [{epoch+2}/{self.num_epochs}] - (Train.) Loss={train_loss:.4f}'
-                )
+                pbar_epochs.set_postfix({'Validation Loss': val_loss, 'AUROC': f'{sum(period_aurocs)/len(period_aurocs):.3f}'})
 
         # Close the epoch bar
         pbar_epochs.close()
 
-    def evaluate(self, test_loader=None):
-        test_loader = self.test_loader if test_loader is None else test_loader
+    def evaluate(self, test_loaders=None):
+        test_loaders = self.test_loaders if test_loaders is None else test_loaders
 
         """Evaluate loop."""
         self.model.eval()
-        test_loss = 0
-        y_true = []
-        y_scores = []
 
-        pbar_loader = tqdm(test_loader, desc=f'Evaluating', unit='Batch', position=1+self.pbar_relative_position)
-        with torch.no_grad():
-            for data, target in pbar_loader:
-                data, target = data.to(self.device), target.to(self.device)
-                output = self.model(data)
-                test_loss += self.loss_fn(output, target.squeeze()).item()  # sum up batch loss
+        pbar_loaders = tqdm(
+            test_loaders,
+            desc=f'Evaluating',
+            unit='period',
+            position=self.pbar_relative_position + 1,
+            leave=False  # Remove old batch bars once each epoch finishes
+        )
+        period_aurocs = []
 
-                y_true.extend(target.cpu().numpy())
-                y_scores.extend(output.softmax(dim=1)[:, 1].cpu().numpy())
+        for period_idx, test_loader in enumerate(pbar_loaders):
+            test_loss = 0.0
+            y_true = []
+            y_scores = []
 
-        test_loss /= len(test_loader.dataset)
-        auroc = roc_auc_score(y_true, y_scores)
-        auprc = average_precision_score(y_true, y_scores)
+            h0, c0 = self.model.init_hidden(test_loader.batch_size)
+            hidden = (h0.to(self.device), c0.to(self.device))
 
-        pbar_loader.close()
-        return test_loss, auroc, auprc
+            with torch.no_grad():
+                for data, target in test_loader:
+                    data, target = data.to(self.device), target.to(self.device)
+                    output, _ = self.model(data, hidden)
+                    test_loss += self.loss_fn(output, target).item()  # sum up batch loss
 
-    def predict(self, dataloader, with_logits=False):
+                    y_true.extend(target.cpu().numpy())
+                    y_scores.extend(output.softmax(dim=1).cpu().numpy())
+
+            test_loss /= len(test_loader.dataset)
+
+            y_true = np.array(y_true)
+            y_scores = np.array(y_scores)
+
+            if y_scores.shape[1] != len(np.unique(y_true)):
+                # Log a warning about skipping evaluation
+                warnings.warn(
+                    f"Skipping AUROC calculation for period {period_idx}. "
+                    f"Shape mismatch: y_true has {len(np.unique(y_true))} unique classes, "
+                    f"but y_scores has {y_scores.shape[1]} columns."
+                )
+            else:
+                # Compute AUROC as usual
+                auroc = roc_auc_score(y_true, y_scores, multi_class='ovr', average='macro')
+                period_aurocs.append(auroc)
+
+        return test_loss, period_aurocs
+
+    def predict(self, dataloaders, with_logits=False):
         self.model.to(self.device)
         self.model.eval()
         y_true = []
         y_scores = []
         logits = []
 
-        pbar_loader = tqdm(dataloader, desc=f'Predict', unit='Batch', position=0+self.pbar_relative_position)
+        pbar_loader = tqdm(dataloaders, desc=f'Predict', unit='Batch', position=0+self.pbar_relative_position)
         with torch.no_grad():
             for data, target in pbar_loader:
                 data, target = data.to(self.device), target.to(self.device)
@@ -131,7 +167,7 @@ class LSTMTrainer:
                     logits.extend(output.cpu().numpy())
 
                 y_true.extend(target.cpu().numpy())
-                y_scores.extend(output.softmax(dim=1)[:, 1].cpu().numpy())
+                y_scores.extend(output.softmax(dim=1).cpu().numpy())
 
         pbar_loader.close()
         if with_logits:
