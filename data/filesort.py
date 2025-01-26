@@ -3,7 +3,7 @@ import os
 import shutil
 
 # Configuration
-data_folder_name = "raw/TrainingData"  # Specify the initial folder name here
+data_folder_name = "raw/TestData"  # Specify the initial folder name here
 destination_dir = "raw"  # Destination for sorted files
 
 # Ensure the destination directory exists
