@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import os
 
 app = Dash(__name__)
-data_path = "/Users/cindy/PycharmProjects/NBIStockForecast/input"
+data_path = "/Users/cindy/PycharmProjects/NBIStockForecast/inputs"
 stocks = ["A", "B", "C", "D", "E"]
 periods = [str(i) for i in range(1, 16)]
 features = ["bidVolume", "bidPrice", "askVolume", "askPrice", "volume", "price"]
@@ -98,7 +98,15 @@ app.layout = html.Div([
                         value=[],
                         inline=True,
                         style={'fontSize': '16px'}
-                    )
+                    ),
+                    html.P("Predictions:", style={'fontWeight': 'bold'}),
+                    dcc.Checklist(
+                        id="label-toggle",
+                        options=[{"label": "Show Label", "value": "show_label"}],
+                        value=[],  # Default: label not shown
+                        inline=True,
+                        style={'fontSize': '16px', 'marginBottom': '10px'}
+                    ),
                 ]
             )
         ]
@@ -123,9 +131,10 @@ def load_period_data(stock, period):
         Input("features", "value"),
         Input("std-dev-options", "value"),
         Input("highlight-options", "value"),
+        Input("label-toggle", "value"),
     ]
 )
-def update_graph(ticker, period, selected_features, std_dev_options, highlight_options):
+def update_graph(ticker, period, selected_features, std_dev_options, highlight_options, label_toggle):
     df = load_period_data(ticker, period)
 
     if df.empty:
@@ -162,6 +171,30 @@ def update_graph(ticker, period, selected_features, std_dev_options, highlight_o
                 name=feature,
                 line=dict(color=colors[i % len(colors)])  # Cycle through colors
             ))
+
+    # Add the "label" feature if toggled on
+    if "show_label" in label_toggle and "label" in df.columns:
+        label_colors = {0: "red", 1: "blue", 2: "green"}
+        label_text = {0: "Down", 1: "Hold", 2: "Up"}
+        main_fig.add_trace(go.Scatter(
+            x=df.index,
+            y=df["label"],
+            mode="markers+lines",
+            name="Label",
+            line=dict(color="cyan"),
+            marker=dict(
+                size=8,
+                color=df["label"].map(label_colors),  # Map label values to colors
+                symbol="circle"
+            ),
+            hovertemplate=(
+                "Timestamp: %{x}<br>" +
+                "Label: %{y}<br>" +
+                "Action: %{text}<extra></extra>"
+            ),
+            text=df["label"].map(label_text),  # Display label meaning in hover text
+            yaxis="y2"  # Assign to secondary y-axis
+        ))
 
     # Highlight high/low of the day
     if "high_day" in highlight_options and 'price' in df.columns:
@@ -238,6 +271,12 @@ def update_graph(ticker, period, selected_features, std_dev_options, highlight_o
         xaxis=dict(
             tickformat="%H:%M:%S",  # Display only the time
             rangeslider=dict(visible=True)  # Enable range slider
+        ),
+        yaxis2=dict(
+            #title="Label (Red = Down, Blue = Hold, Green = Up)",
+            overlaying="y",
+            side="right",
+            range=[-0.5, 2.5]  # Set range for the label
         )
     )
 
