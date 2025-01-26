@@ -49,14 +49,16 @@ class LSTMTrainer:
 
             for train_loader in self.train_loaders:
                 # TODO: Hidden initialization for each epoch
-                hidden = self.model.init_hidden(train_loader.batch_size)
+                h0, c0 = self.model.init_hidden(train_loader.batch_size)
+                hidden = (h0.to(self.device), c0.to(self.device))
 
                 # Training loop
-                for batch_idx, (data, target) in train_loader:
+                for batch_idx, (data, target) in enumerate(train_loader):
                     data, target = data.to(self.device), target.to(self.device)
                     self.optimizer.zero_grad()
 
                     output, hidden = self.model(data, hidden)
+                    hidden = (hidden[0].detach(), hidden[1].detach())
                     current_loss = self.loss_fn(output, target.squeeze())
                     current_loss.backward()
                     self.optimizer.step()

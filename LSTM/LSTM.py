@@ -7,17 +7,18 @@ class LSTM(nn.Module):
 
         self.input_size = input_size
         self.hidden_size = hidden_size
+        self.num_layers = num_layers
 
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, dropout=dropout)
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, dropout=dropout, batch_first=True)
         self.linear = nn.Linear(in_features=hidden_size, out_features=output_size)
 
     def forward(self, input, hidden):
         out, hidden = self.lstm(input, hidden)
         out = out[:, -1, :]
-        out = self.fc(out)  # (batch_size, output_size)
+        out = self.linear(out)  # (batch_size, output_size)
         return out, hidden
 
     def init_hidden(self, batch_size):
         # Return zeros for hidden state and cell state
-        return (torch.zeros(self.num_layers, batch_size, self.hidden_size),
-                torch.zeros(self.num_layers, batch_size, self.hidden_size))
+        return (torch.zeros([self.num_layers, batch_size, self.hidden_size], dtype=torch.float32),
+                torch.zeros([self.num_layers, batch_size, self.hidden_size], dtype=torch.float32))
